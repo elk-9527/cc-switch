@@ -34,6 +34,8 @@ import { HoverTip } from "@/components/ui/hover-tip";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { fieldClass } from "@/components/ui/input";
 import { useSessionUsageSummary } from "@/lib/query/usage";
+import { settingsApi } from "@/lib/api/settings";
+import { toast } from "@/lib/toast";
 import { DRAG_REGION_ATTR } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import type { SessionMeta, TurnIndex } from "@/types";
@@ -339,6 +341,18 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         <DropdownMenuItem className={sessionMenuItemClass} onSelect={onReload}>
           {t("sessionManager.reload", { defaultValue: "重新读取" })}
         </DropdownMenuItem>
+        {session.providerId === "dsh" && (
+          <DropdownMenuItem
+            className={sessionMenuItemClass}
+            onSelect={() =>
+              void settingsApi
+                .openDshDesktop()
+                .catch((error) => toast.error(String(error)))
+            }
+          >
+            {t("dsh.openDesktop")}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           className={cn(

@@ -25,6 +25,7 @@ import { isUpdateAvailable } from "@/lib/version";
  */
 
 export interface ToolVersion {
+  desktop_installation?: { path: string; version: string | null };
   name: string;
   version: string | null;
   latest_version: string | null;

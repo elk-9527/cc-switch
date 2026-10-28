@@ -674,6 +674,10 @@
         "legacyToolSearch": {
           "name": "Legacy Tool Search patch backups",
           "hint": "Left by the removed Tool Search patch feature; the current version no longer reads them."
+        },
+        "dsh": {
+          "name": "DSH native configuration backups",
+          "hint": "Snapshots before provider and MCP edits. Restore them in App configuration."
         }
       }
     },
@@ -5074,6 +5078,15 @@
       "title": "Add a DeepSeek Harness provider",
       "description": "Configure an endpoint, API key and models. Existing custom providers appear here automatically."
     },
-    "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent."
+    "deleteSessionHint": "Delete this session in DeepSeek Harness to keep its history consistent.",
+    "profile": "Managed profile",
+    "dataDirectory": "DSH data directory",
+    "profileHelp": "Providers and MCP use the selected profile. Changing targets refreshes state without copying configuration. Skills, global instructions and sessions share the data directory. Select models in DSH.",
+    "openDesktop": "Open Desktop",
+    "openConfig": "Open configuration folder",
+    "backups": "Native configuration backups",
+    "restore": "Restore",
+    "restoreConfirm": "Restore the DSH configuration and related credentials from this backup? Restore is refused if another program has changed the files since.",
+    "desktopDetected": "Desktop detected (version unknown)"
   }
 }

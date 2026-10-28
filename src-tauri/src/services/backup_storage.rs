@@ -93,6 +93,7 @@ fn categories() -> Vec<Category> {
             DeviceStore::for_device().first_write_backup_dir(),
         ),
         whole("hermes", app_backups.join("hermes")),
+        whole("dsh", app_backups.join("dsh")),
         whole("openclaw", app_backups.join("openclaw")),
         whole("proxyLiveBackup", device_backups.join("proxy-live-backup")),
         files("envVars", env_backups, |name| {

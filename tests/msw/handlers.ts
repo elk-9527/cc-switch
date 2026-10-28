@@ -283,6 +283,19 @@ export const handlers = [
   http.post(`${TAURI_ENDPOINT}/restart_app`, () => success(true)),
 
   http.post(`${TAURI_ENDPOINT}/get_settings`, () => success(getSettings())),
+  http.post(`${TAURI_ENDPOINT}/get_dsh_info`, () => {
+    const settings = getSettings();
+    const home = settings.dshConfigDir ?? "/mock/.dsh";
+    const profile = settings.dshProfile ?? "web";
+    return success({
+      home,
+      defaultHome: "/mock/.dsh",
+      profile,
+      configPath: `${home}/profiles/${profile}/cordis.patch.yml`,
+      desktop: null,
+    });
+  }),
+  http.post(`${TAURI_ENDPOINT}/list_dsh_backups`, () => success([])),
 
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 

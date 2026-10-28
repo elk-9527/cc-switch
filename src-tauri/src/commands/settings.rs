@@ -71,6 +71,8 @@ pub async fn save_settings(
 ) -> Result<bool, String> {
     let existing = crate::settings::get_settings();
     let merged = merge_settings_for_save(settings, &existing);
+    let dsh_target_changed = merged.dsh_config_dir != existing.dsh_config_dir
+        || merged.dsh_profile.unwrap_or_default() != existing.dsh_profile.unwrap_or_default();
     let unify_codex_changed =
         merged.unify_codex_session_history != existing.unify_codex_session_history;
     let unify_codex_enabled = merged.unify_codex_session_history;
@@ -84,6 +86,12 @@ pub async fn save_settings(
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    if dsh_target_changed {
+        if let Err(error) = crate::mcp::dsh::import(state.inner()) {
+            crate::settings::update_settings(existing.clone()).map_err(|e| e.to_string())?;
+            return Err(format!("Unable to read the selected DSH target: {error}"));
+        }
+    }
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {

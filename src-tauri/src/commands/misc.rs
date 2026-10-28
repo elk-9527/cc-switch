@@ -155,6 +155,8 @@ pub async fn get_skills_migration_result() -> Result<Option<SkillsMigrationPaylo
 
 #[derive(serde::Serialize)]
 pub struct ToolVersion {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    desktop_installation: Option<crate::dsh_desktop::DesktopInstallation>,
     name: String,
     version: Option<String>,
     latest_version: Option<String>, // 新增字段：最新版本
@@ -1283,6 +1285,25 @@ async fn get_single_tool_version_impl(
 
     // 1. 获取本地版本
     let probe = probe_local_version(tool, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag);
+    if tool == "dsh"
+        && wsl_distro.is_none()
+        && (crate::dsh_config::Target::current().profile == crate::settings::DshProfile::Desktop
+            || matches!(&probe, ShellProbe::NotFound(_)))
+    {
+        if let Some(desktop) = crate::dsh_desktop::discover() {
+            return ToolVersion {
+                name: tool.into(),
+                version: desktop.version.clone(),
+                latest_version: None,
+                error: None,
+                installed_but_broken: false,
+                env_type,
+                wsl_distro,
+                update_blocked_by_node: None,
+                desktop_installation: Some(desktop),
+            };
+        }
+    }
     let (local_version, local_error, installed_but_broken) = match probe {
         ShellProbe::Found(v) => (Some(v), None, false),
         ShellProbe::FoundButFailed(e) => (None, Some(e), true),
@@ -1335,6 +1356,7 @@ async fn get_single_tool_version_impl(
     };
 
     ToolVersion {
+        desktop_installation: None,
         name: tool.to_string(),
         version: local_version,
         latest_version,
@@ -3373,6 +3395,20 @@ fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
         }
     }
 
+    if tool == "dsh" {
+        if let Some(desktop) = crate::dsh_desktop::discover() {
+            installs.push(ToolInstallation {
+                path: desktop.path.display().to_string(),
+                version: desktop.version,
+                runnable: true,
+                error: None,
+                exited_with_error: false,
+                source: "desktop".into(),
+                is_path_default: false,
+                real: desktop.path,
+            });
+        }
+    }
     // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
     installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
     installs
@@ -4101,6 +4137,11 @@ fn anchored_command_from_paths(tool: &str, bin_path: &str, real_target: &str) ->
 /// 全平台共用——POSIX 和 Windows 版的 `anchored_command_from_paths` 都通过
 /// `installs_anchored_command` 调它,取默认那处再 canonicalize 拿真身。
 fn default_install(installs: &[ToolInstallation]) -> Option<&ToolInstallation> {
+    if crate::dsh_config::Target::current().profile == crate::settings::DshProfile::Desktop {
+        if let Some(desktop) = installs.iter().find(|install| install.source == "desktop") {
+            return Some(desktop);
+        }
+    }
     installs.iter().find(|i| i.is_path_default).or_else(|| {
         if installs.len() == 1 {
             installs.first()

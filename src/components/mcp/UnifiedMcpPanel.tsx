@@ -17,7 +17,7 @@ import { DialogTitle } from "@/components/ui/dialog";
 import { HoverTip } from "@/components/ui/hover-tip";
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import { useIsMutating } from "@tanstack/react-query";
+import { useIsMutating, useQuery } from "@tanstack/react-query";
 import {
   MCP_UPSERT_MUTATION_KEY,
   useAllMcpServers,
@@ -138,6 +138,11 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const [importFilesOpen, setImportFilesOpen] = useState(false);
+  const { data: dshInfo } = useQuery({
+    queryKey: ["dsh", "info"],
+    queryFn: settingsApi.getDshInfo,
+    enabled: importFilesOpen,
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
   /** 整个应用重新同步失败（「重新同步到各应用」或通知条「重试」），不对应某一行 */
@@ -1136,7 +1141,10 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                         </span>
                         <span className="min-w-0">
                           <code className="whitespace-nowrap font-mono">
-                            {IMPORT_SOURCE_FILES[app].file}
+                            {app === "dsh"
+                              ? (dshInfo?.configPath ??
+                                IMPORT_SOURCE_FILES[app].file)
+                              : IMPORT_SOURCE_FILES[app].file}
                           </code>
                           {IMPORT_SOURCE_FILES[app].noteKey && (
                             <span className="text-fg-2">

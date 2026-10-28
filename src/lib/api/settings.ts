@@ -14,6 +14,14 @@ export interface ConfigTransferResult {
   backupId?: string;
 }
 
+export interface DshInfo {
+  home: string;
+  defaultHome: string;
+  profile: "web" | "desktop";
+  configPath: string;
+  desktop: { path: string; version: string | null } | null;
+}
+
 export interface WebDavTestResult {
   success: boolean;
   message?: string;
@@ -31,6 +39,20 @@ export interface WebDavSyncResult {
 }
 
 export const settingsApi = {
+  async getDshInfo(): Promise<DshInfo> {
+    return await invoke("get_dsh_info");
+  },
+  async listDshBackups(): Promise<
+    Array<{ filename: string; configPath: string }>
+  > {
+    return await invoke("list_dsh_backups");
+  },
+  async restoreDshBackup(filename: string): Promise<void> {
+    await invoke("restore_dsh_backup", { filename });
+  },
+  async openDshDesktop(action: "open" | "uninstall" = "open"): Promise<void> {
+    await invoke("open_dsh_desktop", { action });
+  },
   async get(): Promise<Settings> {
     return await invoke("get_settings");
   },

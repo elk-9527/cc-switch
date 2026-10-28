@@ -134,6 +134,123 @@ fn dsh_mcp_failure_leaves_native_file_and_managed_flags_unchanged() {
 }
 
 #[test]
+fn desktop_profile_operations_leave_web_and_defaults_untouched() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = DshHome::new();
+    let state = create_test_state().unwrap();
+    let web = b"# web stays native\n[]\n";
+    fs::write(home.config(), web).unwrap();
+    let desktop = home
+        .directory
+        .path()
+        .join("profiles/desktop/cordis.patch.yml");
+    fs::create_dir_all(desktop.parent().unwrap()).unwrap();
+    fs::write(&desktop, "- id: agent-default-model\n  config: {provider: dsh-opencode-go, model: original-model}\n- id: other\n  config: {dynamic: !!js process.env.VALUE}\n").unwrap();
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        dsh_profile: Some(cc_switch_lib::DshProfile::Desktop),
+        ..Default::default()
+    })
+    .unwrap();
+    ProviderService::add(&state, AppType::Dsh, provider("desktop-gateway"), true).unwrap();
+    assert_eq!(fs::read(home.config()).unwrap(), web);
+    let text = fs::read_to_string(&desktop).unwrap();
+    assert!(text.contains("dsh-opencode-go") && text.contains("original-model"));
+    assert!(text.contains("!!js process.env.VALUE"));
+    assert!(text.contains("CC_SWITCH_DSH_DESKTOP_DESKTOP_GATEWAY"));
+    ProviderService::remove_from_live_config(&state, AppType::Dsh, "desktop-gateway").unwrap();
+    assert_eq!(fs::read(home.config()).unwrap(), web);
+    assert!(!fs::read_to_string(&desktop)
+        .unwrap()
+        .contains("desktop-gateway:"));
+    cc_switch_lib::update_settings(Default::default()).unwrap();
+}
+
+#[test]
+fn explicit_dsh_root_controls_providers_skills_and_instructions_without_writing_env_root() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = DshHome::new();
+    let state = create_test_state().unwrap();
+    let custom = tempfile::tempdir().unwrap();
+    fs::write(
+        custom.path().join("AGENTS.md"),
+        "# Native DSH instructions\n",
+    )
+    .unwrap();
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        dsh_config_dir: Some(custom.path().display().to_string()),
+        dsh_profile: Some(cc_switch_lib::DshProfile::Desktop),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        cc_switch_lib::SkillService::get_app_skills_dir(&AppType::Dsh).unwrap(),
+        custom.path().join("skills")
+    );
+    assert_eq!(
+        cc_switch_lib::PromptService::get_current_file_content(AppType::Dsh)
+            .unwrap()
+            .as_deref(),
+        Some("# Native DSH instructions\n")
+    );
+    ProviderService::add(&state, AppType::Dsh, provider("custom-root"), true).unwrap();
+    assert!(custom
+        .path()
+        .join("profiles/desktop/cordis.patch.yml")
+        .is_file());
+    assert!(!home.config().exists());
+    assert!(!home.directory.path().join(".credentials.yaml").exists());
+    cc_switch_lib::update_settings(Default::default()).unwrap();
+}
+
+#[test]
+fn dsh_exports_native_runtime_acceptance_fixture() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let home = DshHome::new();
+    let state = create_test_state().unwrap();
+    cc_switch_lib::update_settings(cc_switch_lib::AppSettings {
+        dsh_profile: Some(cc_switch_lib::DshProfile::Desktop),
+        ..Default::default()
+    })
+    .unwrap();
+    let config = home
+        .directory
+        .path()
+        .join("profiles/desktop/cordis.patch.yml");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(&config, "- id: llm-pi-ai\n  config: {providers: {}}\n- id: agent-default-model\n  config: {provider: native-provider, model: native-model}\n").unwrap();
+    for (id, api) in [
+        ("chat", "openai-completions"),
+        ("responses", "openai-responses"),
+        ("anthropic", "anthropic-messages"),
+    ] {
+        let mut item = provider(id);
+        item.settings_config["api"] = json!(api);
+        ProviderService::add(&state, AppType::Dsh, item, true).unwrap();
+    }
+    let server: McpServer = serde_json::from_value(json!({"id":"native-fixture-mcp", "name":"Fixture", "server":{"type":"stdio","command":"node","args":["fixture.js"]},"apps":{"dsh":true}})).unwrap();
+    McpService::upsert_server(&state, server).unwrap();
+    let added = fs::read_to_string(&config).unwrap();
+    let mut item = ProviderService::list(&state, AppType::Dsh).unwrap()["chat"].clone();
+    item.settings_config["options"]["baseURL"] = json!("https://updated.example/v1");
+    ProviderService::update(&state, AppType::Dsh, None, item).unwrap();
+    let edited = fs::read_to_string(&config).unwrap();
+    McpService::toggle_app(&state, "native-fixture-mcp", AppType::Dsh, false).unwrap();
+    ProviderService::remove_from_live_config(&state, AppType::Dsh, "chat").unwrap();
+    let removed = fs::read_to_string(&config).unwrap();
+    let output = support::ensure_test_home().join("dsh-native-acceptance.json");
+    fs::write(
+        output,
+        serde_json::to_vec_pretty(&json!({"added":added,"edited":edited,"removed":removed}))
+            .unwrap(),
+    )
+    .unwrap();
+    cc_switch_lib::update_settings(Default::default()).unwrap();
+}
+
+#[test]
 fn dsh_and_omp_mcp_writes_roll_back_together() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();

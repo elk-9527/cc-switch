@@ -11,6 +11,7 @@ import {
   type DirectoryAppId,
 } from "@/components/settings/DirectorySettings";
 import { CodexAuthSettings } from "@/components/settings/CodexAuthSettings";
+import { DshSettings } from "@/components/settings/DshSettings";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import {
   SettingsBlock,
@@ -189,6 +190,7 @@ export function AppConfigSection({
           </SettingsCard>
         </SettingsBlock>
       ))}
+      <DshSettings settings={savedSettings ?? settings} onSave={onAutoSave} />
     </>
   );
 }

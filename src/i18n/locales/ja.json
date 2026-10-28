@@ -674,6 +674,10 @@
         "legacyToolSearch": {
           "name": "旧 Tool Search パッチのバックアップ",
           "hint": "削除済みの Tool Search パッチ機能が残したファイル。現在のバージョンは読み込みません。"
+        },
+        "dsh": {
+          "name": "DSH native configuration backups",
+          "hint": "Snapshots before provider and MCP edits. Restore them in App configuration."
         }
       }
     },
@@ -5074,6 +5078,15 @@
       "title": "DeepSeek Harness プロバイダーを追加",
       "description": "接続先 URL、API キー、モデルを設定します。既存のカスタムプロバイダーは自動的にここに表示されます。"
     },
-    "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。"
+    "deleteSessionHint": "履歴の整合性を保つため、DeepSeek Harness でこのセッションを削除してください。",
+    "profile": "Managed profile",
+    "dataDirectory": "DSH data directory",
+    "profileHelp": "Providers and MCP use the selected profile. Changing targets refreshes state without copying configuration. Skills, global instructions and sessions share the data directory. Select models in DSH.",
+    "openDesktop": "Open Desktop",
+    "openConfig": "Open configuration folder",
+    "backups": "Native configuration backups",
+    "restore": "Restore",
+    "restoreConfirm": "Restore the DSH configuration and related credentials from this backup? Restore is refused if another program has changed the files since.",
+    "desktopDetected": "Desktop detected (version unknown)"
   }
 }

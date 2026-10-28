@@ -1,4 +1,4 @@
-//! DeepSeek Harness' standard `web` profile. Other profiles remain native-owned.
+//! DeepSeek Harness native Web/Desktop configuration. Resolve the target once per operation.
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use indexmap::IndexMap;
@@ -10,15 +10,56 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn data_dir() -> PathBuf {
+pub(crate) struct Target {
+    pub home: PathBuf,
+    pub profile: crate::settings::DshProfile,
+}
+
+impl Target {
+    pub(crate) fn current() -> Self {
+        let settings = crate::settings::get_settings();
+        Self::from_settings(&settings)
+    }
+
+    fn from_settings(settings: &crate::settings::AppSettings) -> Self {
+        let home = settings
+            .dsh_config_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(crate::settings::resolve_override_path)
+            .unwrap_or_else(default_data_dir);
+        Self {
+            home,
+            profile: settings.dsh_profile.unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn config_path(&self) -> PathBuf {
+        self.home
+            .join("profiles")
+            .join(self.profile.as_str())
+            .join("cordis.patch.yml")
+    }
+
+    pub(crate) fn credentials_path(&self) -> PathBuf {
+        self.home.join(".credentials.yaml")
+    }
+}
+
+pub(crate) fn default_data_dir() -> PathBuf {
     std::env::var_os("DSH_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| get_home_dir().join(".dsh"))
 }
 
+pub(crate) fn data_dir() -> PathBuf {
+    Target::current().home
+}
+
 pub(crate) fn config_path() -> PathBuf {
-    data_dir().join("profiles/web/cordis.patch.yml")
+    Target::current().config_path()
 }
 
 fn read_text(path: &Path) -> Result<String, AppError> {
@@ -182,6 +223,217 @@ fn restore(path: &Path, previous: Option<Vec<u8>>) -> Result<(), AppError> {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BackupRecord {
+    config_path: PathBuf,
+    config_before: Option<Vec<u8>>,
+    config_after_hash: String,
+    credentials_path: Option<PathBuf>,
+    credentials_before: Option<Vec<u8>>,
+    credentials_after_hash: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupInfo {
+    pub filename: String,
+    pub config_path: PathBuf,
+}
+
+fn backup_dir() -> PathBuf {
+    #[cfg(test)]
+    {
+        static ROOT: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        ROOT.get_or_init(|| tempfile::tempdir().expect("isolated DSH backup storage"))
+            .path()
+            .join("backups/dsh")
+    }
+    #[cfg(not(test))]
+    {
+        crate::config::get_app_config_dir().join("backups/dsh")
+    }
+}
+
+fn content_hash(bytes: Option<&[u8]>) -> String {
+    use sha2::{Digest, Sha256};
+    match bytes {
+        Some(bytes) => format!("{:x}", Sha256::digest(bytes)),
+        None => "missing".into(),
+    }
+}
+
+fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io(path, error)),
+    }
+}
+
+fn save_backup(
+    path: &Path,
+    before: Option<Vec<u8>>,
+    after: &[u8],
+    credentials: Option<(&Path, Option<Vec<u8>>)>,
+) -> Result<(), AppError> {
+    let (credentials_path, credentials_before, credentials_after_hash) = match credentials {
+        Some((path, before)) => (
+            Some(path.to_path_buf()),
+            before,
+            Some(content_hash(read_optional(path)?.as_deref())),
+        ),
+        None => (None, None, None),
+    };
+    let record = BackupRecord {
+        config_path: path.to_path_buf(),
+        config_before: before,
+        config_after_hash: content_hash(Some(after)),
+        credentials_path,
+        credentials_before,
+        credentials_after_hash,
+    };
+    let dir = backup_dir();
+    fs::create_dir_all(&dir).map_err(|error| AppError::io(&dir, error))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file = dir.join(format!("dsh-{stamp}.json"));
+    let bytes = serde_json::to_vec(&record).map_err(|error| AppError::Config(error.to_string()))?;
+    atomic_write_private(&file, &bytes)?;
+    let mut files: Vec<_> = fs::read_dir(&dir)
+        .map_err(|error| AppError::io(&dir, error))?
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter(|entry| valid_backup_name(&entry.file_name().to_string_lossy()))
+        .map(|entry| entry.path())
+        .collect();
+    files.sort();
+    let remove = files
+        .len()
+        .saturating_sub(crate::settings::effective_backup_retain_count().max(1));
+    for file in files.into_iter().take(remove) {
+        fs::remove_file(&file).map_err(|error| AppError::io(&file, error))?;
+    }
+    Ok(())
+}
+
+fn valid_backup_name(name: &str) -> bool {
+    name.strip_prefix("dsh-")
+        .and_then(|name| name.strip_suffix(".json"))
+        .is_some_and(|stamp| !stamp.is_empty() && stamp.bytes().all(|byte| byte.is_ascii_digit()))
+}
+
+pub fn list_backups() -> Result<Vec<BackupInfo>, AppError> {
+    let target = Target::current();
+    let dir = backup_dir();
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+    let mut result = Vec::new();
+    for entry in fs::read_dir(&dir)
+        .map_err(|error| AppError::io(&dir, error))?
+        .flatten()
+    {
+        let filename = entry.file_name().to_string_lossy().into_owned();
+        if !valid_backup_name(&filename) || !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let Ok(bytes) = fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_slice::<BackupRecord>(&bytes) else {
+            continue;
+        };
+        if record.config_path == target.config_path() {
+            result.push(BackupInfo {
+                filename,
+                config_path: record.config_path,
+            });
+        }
+    }
+    result.sort_by(|a, b| b.filename.cmp(&a.filename));
+    Ok(result)
+}
+
+pub fn restore_backup<T>(
+    filename: &str,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    restore_backup_for_target(&Target::current(), filename, commit)
+}
+
+fn restore_backup_for_target<T>(
+    target: &Target,
+    filename: &str,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if !valid_backup_name(filename) {
+        return Err(AppError::InvalidInput("Invalid DSH backup filename".into()));
+    }
+    let file = backup_dir().join(filename);
+    if fs::symlink_metadata(&file)
+        .map_err(|error| AppError::io(&file, error))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(AppError::InvalidInput(
+            "DSH backup must be a regular file".into(),
+        ));
+    }
+    let record: BackupRecord =
+        serde_json::from_slice(&fs::read(&file).map_err(|error| AppError::io(&file, error))?)
+            .map_err(|error| AppError::Config(error.to_string()))?;
+    if record.config_path != target.config_path()
+        || record
+            .credentials_path
+            .as_ref()
+            .is_some_and(|path| path != &target.credentials_path())
+    {
+        return Err(AppError::InvalidInput(
+            "This DSH backup belongs to another configuration target".into(),
+        ));
+    }
+    let _credentials_lock = record
+        .credentials_path
+        .as_ref()
+        .map(|path| FileLock::acquire(path))
+        .transpose()?;
+    let _profile_lock = FileLock::acquire(&record.config_path)?;
+    let current = read_optional(&record.config_path)?;
+    let current_credentials = record
+        .credentials_path
+        .as_ref()
+        .map(|path| read_optional(path))
+        .transpose()?
+        .flatten();
+    if content_hash(current.as_deref()) != record.config_after_hash
+        || record
+            .credentials_after_hash
+            .as_ref()
+            .is_some_and(|expected| expected != &content_hash(current_credentials.as_deref()))
+    {
+        return Err(AppError::Conflict(
+            "DSH configuration has changed since this backup; refusing to overwrite newer changes"
+                .into(),
+        ));
+    }
+    let result = (|| {
+        restore(&record.config_path, record.config_before)?;
+        if let Some(path) = &record.credentials_path {
+            restore(path, record.credentials_before)?;
+        }
+        commit()
+    })();
+    if result.is_err() {
+        restore(&record.config_path, current)?;
+        if let Some(path) = &record.credentials_path {
+            restore(path, current_credentials)?;
+        }
+    }
+    result
+}
+
 /// Hold the native writer lock through the database commit, rolling back on failure.
 fn edit_path_and_commit<T>(
     path: &Path,
@@ -189,12 +441,24 @@ fn edit_path_and_commit<T>(
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
     let _guard = FileLock::acquire(path)?;
+    edit_locked_path_and_commit(path, None, edit, commit)
+}
+
+fn edit_locked_path_and_commit<T>(
+    path: &Path,
+    credentials_before: Option<(&Path, Option<Vec<u8>>)>,
+    edit: impl FnOnce(&str) -> Result<String, AppError>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
     let previous = if path.exists() {
         Some(fs::read(path).map_err(|error| AppError::io(path, error))?)
     } else {
         None
     };
     let next = edit(&read_text(path)?)?;
+    if previous.as_deref() != Some(next.as_bytes()) || credentials_before.is_some() {
+        save_backup(path, previous.clone(), next.as_bytes(), credentials_before)?;
+    }
     atomic_write_private(path, next.as_bytes())?;
     match commit() {
         Ok(result) => Ok(result),
@@ -255,7 +519,8 @@ fn credential_document(path: &Path) -> Result<Yaml, AppError> {
 }
 
 pub(crate) fn get_providers() -> Result<IndexMap<String, Value>, AppError> {
-    get_providers_from(&config_path(), &data_dir().join(".credentials.yaml"))
+    let target = Target::current();
+    get_providers_from(&target.config_path(), &target.credentials_path())
 }
 
 fn get_providers_from(
@@ -425,9 +690,10 @@ pub(crate) fn save_and_commit<T>(
     create: bool,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
+    let target = Target::current();
     save_paths_and_commit(
-        &config_path(),
-        &data_dir().join(".credentials.yaml"),
+        &target.config_path(),
+        &target.credentials_path(),
         id,
         config,
         create,
@@ -447,6 +713,7 @@ fn save_paths_and_commit<T>(
         return commit();
     }
     let _credentials_lock = FileLock::acquire(credentials_path)?;
+    let _profile_lock = FileLock::acquire(path)?;
     let previous_credentials = if credentials_path.exists() {
         Some(fs::read(credentials_path).map_err(|error| AppError::io(credentials_path, error))?)
     } else {
@@ -509,7 +776,13 @@ fn save_paths_and_commit<T>(
             .filter(|key| !key.trim().is_empty())
         {
             let reference = format!(
-                "CC_SWITCH_DSH_{}",
+                "CC_SWITCH_DSH_{}_{}",
+                path.parent()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .filter(|name| *name == "desktop")
+                    .unwrap_or("web")
+                    .to_ascii_uppercase(),
                 id.replace('-', "_").to_ascii_uppercase()
             );
             let mut credentials = credential_document(credentials_path)?;
@@ -537,8 +810,9 @@ fn save_paths_and_commit<T>(
     } else {
         None
     };
-    let result = edit_path_and_commit(
+    let result = edit_locked_path_and_commit(
         path,
+        changed_credentials.then(|| (credentials_path, previous_credentials.clone())),
         |text| update_provider(text, id, native, create),
         commit,
     );
@@ -846,7 +1120,7 @@ mod tests {
             .unwrap();
             let saved = credential_document(&credentials).unwrap();
             assert_eq!(saved["records"], original_document["records"]);
-            assert_eq!(saved["refs"]["CC_SWITCH_DSH_GATEWAY"], "test-value");
+            assert_eq!(saved["refs"]["CC_SWITCH_DSH_WEB_GATEWAY"], "test-value");
             assert_eq!(
                 get_providers_from(&path, &credentials).unwrap()["gateway"]["options"]["apiKey"],
                 "test-value"
@@ -1127,5 +1401,88 @@ mod tests {
         assert!(edit_path_and_commit(&path, |_| Ok(String::new()), || Ok(())).is_err());
         drop(guard);
         assert!(!path.with_extension("yml.lock").exists());
+    }
+
+    #[test]
+    fn dsh_target_defaults_to_web_and_honors_explicit_root_and_profile() {
+        let settings: crate::settings::AppSettings = serde_json::from_value(json!({})).unwrap();
+        let legacy = Target::from_settings(&settings);
+        assert_eq!(legacy.profile, crate::settings::DshProfile::Web);
+        assert_eq!(legacy.home, default_data_dir());
+        let root = tempfile::tempdir().unwrap();
+        let settings = crate::settings::AppSettings {
+            dsh_config_dir: Some(format!("  {}  ", root.path().display())),
+            dsh_profile: Some(crate::settings::DshProfile::Desktop),
+            ..settings
+        };
+        let desktop = Target::from_settings(&settings);
+        assert_eq!(
+            desktop.config_path(),
+            root.path().join("profiles/desktop/cordis.patch.yml")
+        );
+        assert!(serde_json::from_value::<crate::settings::AppSettings>(
+            json!({"dshProfile":"../../outside"})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn dsh_desktop_keys_are_isolated_and_backup_restores_both_files() {
+        let root = tempfile::tempdir().unwrap();
+        let target = Target {
+            home: root.path().to_path_buf(),
+            profile: crate::settings::DshProfile::Desktop,
+        };
+        let desktop = target.config_path();
+        let web = root.path().join("profiles/web/cordis.patch.yml");
+        let creds = target.credentials_path();
+        fs::create_dir_all(web.parent().unwrap()).unwrap();
+        fs::write(&web, FACTORY_PROFILE).unwrap();
+        fs::write(
+            &creds,
+            "version: 1\nrecords: {native: {keep: yes}}\nrefs: {}\n",
+        )
+        .unwrap();
+        let original_credentials = fs::read(&creds).unwrap();
+        save_paths_and_commit(&web, &creds, "gateway", Some(editor_config()), true, || {
+            Ok(())
+        })
+        .unwrap();
+        let web_before = fs::read(&web).unwrap();
+        let credentials_before = fs::read(&creds).unwrap();
+        save_paths_and_commit(
+            &desktop,
+            &creds,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(()),
+        )
+        .unwrap();
+        let yaml = credential_document(&creds).unwrap();
+        assert_eq!(yaml["refs"]["CC_SWITCH_DSH_DESKTOP_GATEWAY"], "test-value");
+        assert_eq!(yaml["refs"]["CC_SWITCH_DSH_WEB_GATEWAY"], "test-value");
+        let mut backups: Vec<_> = fs::read_dir(backup_dir())
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| {
+                let record: BackupRecord =
+                    serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
+                (record.config_path == desktop)
+                    .then(|| entry.file_name().to_string_lossy().into_owned())
+            })
+            .collect();
+        backups.sort();
+        let name = backups.last().unwrap();
+        let changed = fs::read(&desktop).unwrap();
+        fs::write(&desktop, b"# externally changed\n[]\n").unwrap();
+        assert!(restore_backup_for_target(&target, name, || Ok(())).is_err());
+        fs::write(&desktop, &changed).unwrap();
+        restore_backup_for_target(&target, name, || Ok(())).unwrap();
+        assert!(!desktop.exists());
+        assert_eq!(fs::read(&creds).unwrap(), credentials_before);
+        assert_eq!(fs::read(&web).unwrap(), web_before);
+        assert_ne!(credentials_before, original_credentials);
+        assert!(restore_backup_for_target(&target, "../outside.json", || Ok(())).is_err());
     }
 }

@@ -674,6 +674,10 @@
         "legacyToolSearch": {
           "name": "旧版 Tool Search 补丁备份",
           "hint": "已移除的 Tool Search 补丁功能留下的文件，当前版本不会再读取。"
+        },
+        "dsh": {
+          "name": "DSH 原生配置备份",
+          "hint": "供应商、MCP 修改前的原生配置快照；可在应用配置中恢复。"
         }
       }
     },
@@ -5074,6 +5078,15 @@
       "title": "添加 DeepSeek Harness 供应商",
       "description": "配置请求地址、API Key 和模型。已有的自定义供应商会自动显示在这里。"
     },
-    "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。"
+    "deleteSessionHint": "请在 DeepSeek Harness 中删除此会话，以保持原生历史记录一致。",
+    "profile": "管理配置集",
+    "dataDirectory": "DSH 数据目录",
+    "profileHelp": "供应商和 MCP 写入所选配置集；切换目标只刷新状态，不复制配置。Skills、全局提示词和会话使用共同的数据目录。模型请在 DSH 中选择。",
+    "openDesktop": "打开桌面版",
+    "openConfig": "打开配置目录",
+    "backups": "原生配置备份",
+    "restore": "恢复",
+    "restoreConfirm": "恢复此备份中的 DSH 配置和相关凭据？如果文件在此后被其他程序修改，恢复会被拒绝。",
+    "desktopDetected": "已检测到桌面版（版本未知）"
   }
 }

@@ -58,6 +58,46 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
 }
 
 impl Database {
+    /// Refresh only DSH membership from one native profile, in a single transaction.
+    pub(crate) fn import_dsh_mcp_servers(&self, servers: &[McpServer]) -> Result<usize, AppError> {
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE mcp_servers SET enabled_dsh = 0 WHERE enabled_dsh != 0",
+            [],
+        )?;
+        let mut added = 0;
+        for server in servers {
+            let existing: Option<String> = tx
+                .query_row(
+                    "SELECT server_config FROM mcp_servers WHERE id = ?1",
+                    [&server.id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(existing) = existing {
+                let config: serde_json::Value = serde_json::from_str(&existing)
+                    .map_err(|error| AppError::Config(error.to_string()))?;
+                if ["type", "command", "args", "env", "cwd", "url", "headers"]
+                    .iter()
+                    .any(|field| config.get(*field) != server.server.get(*field))
+                {
+                    continue;
+                }
+                tx.execute(
+                    "UPDATE mcp_servers SET enabled_dsh = ?1 WHERE id = ?2",
+                    params![server.apps.dsh, server.id],
+                )?;
+            } else {
+                tx.execute("INSERT INTO mcp_servers (id, name, server_config, tags, enabled_dsh) VALUES (?1, ?2, ?3, '[]', ?4)",
+                    params![server.id, server.name, server.server.to_string(), server.apps.dsh])?;
+                added += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(added)
+    }
+
     /// 获取所有 MCP 服务器
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -169,6 +209,49 @@ impl Database {
         conn.execute("DELETE FROM mcp_servers WHERE id = ?1", params![id])
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod dsh_import_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn server(id: &str) -> McpServer {
+        serde_json::from_value(json!({"id":id,"name":id,"server":{"type":"stdio","command":"node"},"apps":{"dsh":true,"claude":true}})).unwrap()
+    }
+
+    #[test]
+    fn dsh_import_refreshes_membership_without_overwriting_other_apps_or_conflicting_specs() {
+        let db = Database::memory().unwrap();
+        db.save_mcp_server(&server("shared")).unwrap();
+        db.save_mcp_server(&server("old-profile-only")).unwrap();
+        let mut conflict = server("shared");
+        conflict.server["command"] = json!("different-command");
+        assert_eq!(
+            db.import_dsh_mcp_servers(&[conflict, server("new")])
+                .unwrap(),
+            1
+        );
+        let saved = db.get_all_mcp_servers().unwrap();
+        assert!(!saved["shared"].apps.dsh && saved["shared"].apps.claude);
+        assert_eq!(saved["shared"].server["command"], "node");
+        assert!(!saved["old-profile-only"].apps.dsh && saved["old-profile-only"].apps.claude);
+        assert!(saved["new"].apps.dsh);
+        assert!(!saved["new"].apps.claude);
+    }
+
+    #[test]
+    fn dsh_import_failure_rolls_back_membership_and_new_rows() {
+        let db = Database::memory().unwrap();
+        db.save_mcp_server(&server("existing")).unwrap();
+        db.conn.lock().unwrap().execute_batch("CREATE TRIGGER reject_dsh_fixture BEFORE INSERT ON mcp_servers WHEN NEW.id = 'fail' BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").unwrap();
+        assert!(db
+            .import_dsh_mcp_servers(&[server("new"), server("fail")])
+            .is_err());
+        let saved = db.get_all_mcp_servers().unwrap();
+        assert!(saved["existing"].apps.dsh && saved["existing"].apps.claude);
+        assert!(!saved.contains_key("new"));
     }
 }
 

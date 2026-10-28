@@ -62,6 +62,7 @@ const DIRECTORY_KEYS = [
   "hermesConfigDir",
   "piConfigDir",
   "ompConfigDir",
+  "dshConfigDir",
 ] as const;
 
 const sanitizeDir = (value?: string | null): string | undefined => {

@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import { toast } from "@/lib/toast";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
@@ -96,6 +98,7 @@ import {
 
 /** 安装来源的显示名：只标认得出的，认不出（system）就不标，免得标错。 */
 const SOURCE_LABEL: Record<string, string> = {
+  desktop: "Desktop",
   homebrew: "Homebrew",
   nvm: "npm",
   volta: "npm",
@@ -144,11 +147,20 @@ const DragHandleContext = createContext<DragHandle | null>(null);
 
 /** 本机有这个命令行应用：探到了版本、装了但跑不起来，或探测报告里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
-  info: { version?: string | null; installed_but_broken?: boolean } | undefined,
+  info:
+    | {
+        version?: string | null;
+        installed_but_broken?: boolean;
+        desktop_installation?: unknown;
+      }
+    | undefined,
   report: ToolInstallationReport | undefined,
 ): boolean {
   return Boolean(
-    info?.version || info?.installed_but_broken || report?.installs.length,
+    info?.version ||
+      info?.installed_but_broken ||
+      info?.desktop_installation ||
+      report?.installs.length,
   );
 }
 
@@ -717,6 +729,11 @@ function ToolRow({
   const report: ToolInstallationReport | undefined =
     tools.installReports?.[tool];
   const defaultInstall =
+    (info?.desktop_installation
+      ? report?.installs.find(
+          (install) => install.path === info.desktop_installation?.path,
+        )
+      : undefined) ??
     report?.installs.find((install) => install.is_path_default) ??
     report?.installs[0];
   const otherInstalls = (report?.installs.length ?? 0) - 1;
@@ -768,6 +785,8 @@ function ToolRow({
         </div>
       )}
     </div>
+  ) : info?.desktop_installation ? (
+    <span className="text-caption text-fg-2">{t("dsh.desktopDetected")}</span>
   ) : broken ? (
     <span className="inline-flex items-center gap-1 text-caption font-medium text-warning-text">
       <AlertTriangle className="h-3.5 w-3.5" />
@@ -777,7 +796,19 @@ function ToolRow({
     <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
   );
 
-  const actionButton = action ? (
+  const actionButton = info?.desktop_installation ? (
+    <Button
+      variant="neutral"
+      size="compact"
+      onClick={() =>
+        void settingsApi
+          .openDshDesktop()
+          .catch((error) => toast.error(String(error)))
+      }
+    >
+      {t("dsh.openDesktop")}
+    </Button>
+  ) : action ? (
     <Button
       variant="neutral"
       size="compact"
@@ -821,6 +852,10 @@ function ToolRow({
         </button>
       )}
     </>
+  ) : info?.desktop_installation ? (
+    <span className="truncate font-mono" title={info.desktop_installation.path}>
+      {info.desktop_installation.path}
+    </span>
   ) : !info?.version && !isVersionLoading ? (
     <span className="truncate" title={installHint}>
       {installHint}
@@ -954,7 +989,13 @@ function ToolRow({
             </HoverTip>
             <DropdownMenuContent align="end" className="min-w-[160px]">
               <DropdownMenuItem
-                onSelect={onUninstall}
+                onSelect={() =>
+                  info?.desktop_installation
+                    ? void settingsApi
+                        .openDshDesktop("uninstall")
+                        .catch((error) => toast.error(String(error)))
+                    : onUninstall()
+                }
                 className="text-danger-text focus:text-danger-text"
               >
                 <Trash2 className="h-3.5 w-3.5" />

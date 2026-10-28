@@ -16,6 +16,7 @@ mod config;
 mod database;
 mod deeplink;
 mod dsh_config;
+mod dsh_desktop;
 mod error;
 mod gemini_config;
 mod gemini_mcp;
@@ -82,7 +83,7 @@ pub use services::{
     ConfigService, EndpointLatency, McpService, PromptService, ProviderService, ProxyService,
     SkillService, SpeedtestService,
 };
-pub use settings::{update_settings, AppSettings};
+pub use settings::{update_settings, AppSettings, DshProfile};
 pub use store::AppState;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -1799,6 +1800,10 @@ pub fn run() {
             commands::delete_sessions,
             commands::launch_session_terminal,
             commands::get_tool_versions,
+            commands::get_dsh_info,
+            commands::open_dsh_desktop,
+            commands::list_dsh_backups,
+            commands::restore_dsh_backup,
             commands::run_tool_lifecycle_action,
             commands::prepare_tool_uninstall,
             commands::probe_tool_installations,

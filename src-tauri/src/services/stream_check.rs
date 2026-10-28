@@ -19,6 +19,7 @@
 use reqwest::header::HeaderValue;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Instant;
 
 use crate::app_config::AppType;
@@ -174,6 +175,15 @@ impl StreamCheckService {
                 let npm = Self::extract_opencode_npm(provider);
                 Self::resolve_opencode_base_url(provider, npm.as_deref())
             }
+            AppType::Dsh => provider
+                .settings_config
+                .pointer("/options/baseURL")
+                .and_then(Value::as_str)
+                .filter(|url| !url.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    AppError::InvalidInput("DeepSeek Harness endpoint is missing".into())
+                }),
             AppType::OpenClaw => Self::extract_openclaw_base_url(provider),
             AppType::Hermes => Self::extract_hermes_base_url(provider),
             AppType::Pi => crate::pi_config::provider_base_url(&provider.settings_config),
@@ -404,6 +414,21 @@ mod tests {
         assert_eq!(config.max_retries, 1);
         // 降级阈值沿用旧尺度，避免把 1 秒多的正常延迟误判为"较慢"
         assert_eq!(config.degraded_threshold_ms, 6000);
+    }
+
+    #[test]
+    fn dsh_reachability_uses_the_configured_base_without_a_proxy_adapter() {
+        let provider =
+            make_provider(serde_json::json!({"options":{"baseURL":"http://127.0.0.1:12345/v1"}}));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Dsh, &provider).unwrap(),
+            "http://127.0.0.1:12345/v1"
+        );
+        assert!(StreamCheckService::resolve_base_url(
+            &AppType::Dsh,
+            &make_provider(serde_json::json!({}))
+        )
+        .is_err());
     }
 
     #[test]

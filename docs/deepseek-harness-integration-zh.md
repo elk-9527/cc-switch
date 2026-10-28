@@ -1,5 +1,7 @@
 # DeepSeek Harness 接入
 
+桌面版扩展支持见 [DSH 桌面版说明](dsh-desktop-support-zh.md)。现在可在「设置 → 应用配置 → DeepSeek Harness」选择 `web` 或 `desktop`，并指定 DSH 数据目录。未指定配置集的旧设置继续使用 `web`。下文的历史验证记录对应最初的 Web 接入。
+
 DeepSeek Harness 的应用 ID 为 `dsh`，命令为 `dsh`，npm 包为 `@deepseek-ai/dsh`。接入参考 Qoder CLI 和 Kimi Code 的原生配置管理方式：供应商共存，直接连接原生客户端，不启用 CC Switch 本地路由。
 
 ## 安装、升级与卸载

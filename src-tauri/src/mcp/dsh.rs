@@ -16,8 +16,9 @@ pub(crate) fn sync_and_commit<T>(
 }
 
 pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
-    let mut existing = state.db.get_all_mcp_servers()?;
-    let mut count = 0;
+    // Parse the complete target before touching the database. A failed parse or
+    // database write must leave the previous membership intact.
+    let mut servers = Vec::new();
     for entry in crate::dsh_config::mcp_entries()? {
         let Some(id) = entry["config"]["serverName"].as_str() else {
             continue;
@@ -41,31 +42,19 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
         if super::validation::validate_server_spec(&spec).is_err() {
             continue;
         }
-        let mut server = if let Some(server) = existing.shift_remove(id) {
-            // Import never overwrites a different server's transport or managed state.
-            let fields = ["type", "command", "args", "env", "cwd", "url", "headers"];
-            if fields
-                .iter()
-                .any(|field| server.server.get(*field) != spec.get(*field))
-            {
-                continue;
-            }
-            server
-        } else {
-            count += 1;
-            McpServer {
-                id: id.into(),
-                name: id.into(),
-                server: spec,
-                apps: McpApps::default(),
-                description: None,
-                homepage: None,
-                docs: None,
-                tags: vec![],
-            }
-        };
-        server.apps.dsh = entry["disabled"].as_bool() != Some(true);
-        state.db.save_mcp_server(&server)?;
+        servers.push(McpServer {
+            id: id.into(),
+            name: id.into(),
+            server: spec,
+            apps: McpApps {
+                dsh: entry["disabled"].as_bool() != Some(true),
+                ..Default::default()
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        });
     }
-    Ok(count)
+    state.db.import_dsh_mcp_servers(&servers)
 }

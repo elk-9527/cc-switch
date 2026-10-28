@@ -465,7 +465,10 @@ describe("supportsConnectivityCheck", () => {
     },
   );
 
-  it.each(["mcode", "dsh", "kimi"] as const)("%s 不支持连通检测", (appId) => {
+  it("DSH custom providers support reachability checks", () => {
+    expect(supportsConnectivityCheck("dsh", mkProvider())).toBe(true);
+  });
+  it.each(["mcode", "kimi"] as const)("%s 不支持连通检测", (appId) => {
     expect(supportsConnectivityCheck(appId, mkProvider())).toBe(false);
   });
 });

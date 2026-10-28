@@ -485,7 +485,16 @@ export const useSaveSettingsMutation = () => {
     mutationFn: async (settings: Settings) => {
       await settingsApi.save(settings);
     },
-    onSuccess: async () => {
+    onSuccess: async (_, settings) => {
+      const previous = queryClient.getQueryData<Settings>(["settings"]);
+      if (
+        previous?.dshConfigDir !== settings.dshConfigDir ||
+        (previous?.dshProfile ?? "web") !== (settings.dshProfile ?? "web")
+      ) {
+        await queryClient.invalidateQueries({
+          predicate: (query) => query.queryKey[0] !== "settings",
+        });
+      }
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({
         queryKey: ["opencode", "runtime-models"],

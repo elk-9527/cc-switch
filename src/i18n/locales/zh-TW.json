@@ -674,6 +674,10 @@
         "legacyToolSearch": {
           "name": "舊版 Tool Search 修補備份",
           "hint": "已移除的 Tool Search 修補功能留下的檔案，目前版本不會再讀取。"
+        },
+        "dsh": {
+          "name": "DSH native configuration backups",
+          "hint": "Snapshots before provider and MCP edits. Restore them in App configuration."
         }
       }
     },
@@ -5075,6 +5079,15 @@
       "title": "新增 DeepSeek Harness 供應商",
       "description": "設定請求網址、API Key 和模型。現有的自訂供應商會自動顯示在這裡。"
     },
-    "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。"
+    "deleteSessionHint": "請在 DeepSeek Harness 中刪除此工作階段，以保持原生歷史記錄一致。",
+    "profile": "Managed profile",
+    "dataDirectory": "DSH data directory",
+    "profileHelp": "Providers and MCP use the selected profile. Changing targets refreshes state without copying configuration. Skills, global instructions and sessions share the data directory. Select models in DSH.",
+    "openDesktop": "Open Desktop",
+    "openConfig": "Open configuration folder",
+    "backups": "Native configuration backups",
+    "restore": "Restore",
+    "restoreConfirm": "Restore the DSH configuration and related credentials from this backup? Restore is refused if another program has changed the files since.",
+    "desktopDetected": "Desktop detected (version unknown)"
   }
 }
