@@ -274,13 +274,13 @@ fn save_backup(
     path: &Path,
     before: Option<Vec<u8>>,
     after: &[u8],
-    credentials: Option<(&Path, Option<Vec<u8>>)>,
+    credentials: Option<(&Path, Option<Vec<u8>>, &[u8])>,
 ) -> Result<(), AppError> {
     let (credentials_path, credentials_before, credentials_after_hash) = match credentials {
-        Some((path, before)) => (
+        Some((path, before, after)) => (
             Some(path.to_path_buf()),
             before,
-            Some(content_hash(read_optional(path)?.as_deref())),
+            Some(content_hash(Some(after))),
         ),
         None => (None, None, None),
     };
@@ -446,7 +446,7 @@ fn edit_path_and_commit<T>(
 
 fn edit_locked_path_and_commit<T>(
     path: &Path,
-    credentials_before: Option<(&Path, Option<Vec<u8>>)>,
+    credentials: Option<(&Path, Option<Vec<u8>>, &[u8])>,
     edit: impl FnOnce(&str) -> Result<String, AppError>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
@@ -456,8 +456,18 @@ fn edit_locked_path_and_commit<T>(
         None
     };
     let next = edit(&read_text(path)?)?;
-    if previous.as_deref() != Some(next.as_bytes()) || credentials_before.is_some() {
-        save_backup(path, previous.clone(), next.as_bytes(), credentials_before)?;
+    if previous.as_deref() != Some(next.as_bytes()) || credentials.is_some() {
+        save_backup(
+            path,
+            previous.clone(),
+            next.as_bytes(),
+            credentials
+                .as_ref()
+                .map(|(path, before, after)| (*path, before.clone(), *after)),
+        )?;
+    }
+    if let Some((path, _, after)) = credentials {
+        atomic_write_private(path, after)?;
     }
     atomic_write_private(path, next.as_bytes())?;
     match commit() {
@@ -719,7 +729,7 @@ fn save_paths_and_commit<T>(
     } else {
         None
     };
-    let mut changed_credentials = false;
+    let mut next_credentials = None;
     let native = if let Some(config) = config {
         validate_provider(id, &config)?;
         let mut native = config.clone();
@@ -801,8 +811,7 @@ fn save_paths_and_commit<T>(
                 credentials["refs"][&reference] = Yaml::from(key);
                 let yaml = serde_yaml::to_string(&credentials)
                     .map_err(|error| AppError::Config(error.to_string()))?;
-                atomic_write_private(credentials_path, yaml.as_bytes())?;
-                changed_credentials = true;
+                next_credentials = Some(yaml.into_bytes());
                 object.insert("apiKeyEnv".into(), json!(reference));
             }
         }
@@ -812,12 +821,18 @@ fn save_paths_and_commit<T>(
     };
     let result = edit_locked_path_and_commit(
         path,
-        changed_credentials.then(|| (credentials_path, previous_credentials.clone())),
+        next_credentials
+            .as_deref()
+            .map(|next| (credentials_path, previous_credentials.clone(), next)),
         |text| update_provider(text, id, native, create),
         commit,
     );
-    if result.is_err() && changed_credentials {
-        restore(credentials_path, previous_credentials)?;
+    if result.is_err() && next_credentials.is_some() {
+        // Validation and backup failures occur before any credential write.
+        // Avoid rewriting an unchanged original in that case.
+        if read_optional(credentials_path)? != previous_credentials {
+            restore(credentials_path, previous_credentials)?;
+        }
     }
     result
 }
@@ -1215,6 +1230,42 @@ mod tests {
         )
         .is_err());
         assert!(!credentials.exists());
+    }
+
+    #[test]
+    fn dsh_profile_validation_leaves_credentials_metadata_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::write(&path, "not: [valid YAML").unwrap();
+        fs::write(
+            &credentials,
+            "version: 1\nrefs: {EXISTING: old-key}\nrecords: {}\n",
+        )
+        .unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&credentials)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000))
+            .unwrap();
+        let before = fs::metadata(&credentials).unwrap().modified().unwrap();
+        let bytes = fs::read(&credentials).unwrap();
+        assert!(save_paths_and_commit(
+            &path,
+            &credentials,
+            "gateway",
+            Some(editor_config()),
+            true,
+            || Ok(())
+        )
+        .is_err());
+        assert_eq!(fs::read(&credentials).unwrap(), bytes);
+        assert_eq!(
+            fs::metadata(&credentials).unwrap().modified().unwrap(),
+            before
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "not: [valid YAML");
     }
 
     #[test]
