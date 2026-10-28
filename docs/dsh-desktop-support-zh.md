@@ -53,3 +53,16 @@ Rust 集成测试 `dsh_exports_native_runtime_acceptance_fixture` 导出供应�
 cargo test --test dsh_commands -- --test-threads=1
 node scripts/validate-dsh-native.mjs <官方包的node_modules目录> <隔离测试home>/dsh-native-acceptance.json
 ```
+
+## 独立 Windows 构建
+
+安装 Windows Rust/MSVC 工具链并执行 `pnpm install --frozen-lockfile` 后运行：
+
+```powershell
+$env:CARGO_TARGET_DIR = Join-Path $PWD 'build/target'
+./scripts/build-dsh-windows.ps1
+```
+
+产物位于 `release/dsh-desktop`。通过 `Start-DSH.cmd` 启动，整目录保留；首次选择 Desktop，CC Switch 的数据库、设置、备份和 WebView 缓存放在包内 `data/`。DSH 原生目录仍是显式设置、`DSH_HOME` 或用户目录下的 `.dsh`，可在设置中修改。包里的设置和备份可能包含凭据，不应上传 GitHub。
+
+`tauri.dsh.conf.json` 使用独立应用标识 `com.ccswitch.desktop.dsh`，不替换已有 CC Switch，不注册原版的 URL scheme。构建脚本保留已有包内数据，只更新程序。`-SkipBuild` 可打包已使用这一配置编译好的程序，不应传入普通构建的程序。
